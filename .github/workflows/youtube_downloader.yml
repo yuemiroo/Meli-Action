@@ -27,9 +27,22 @@ on:
         description: 'حداکثر حجم هر قسمت (MB) - 0 = خودکار ۱۸۰۰ مگابایت'
         required: false
         type: string
-        default: '1800'
+        default: '90'
 
+      upload_method:
+        description: '📤 روش ذخیره نهایی'
+        required: true
+        type: choice
+        options:
+          - repository (push to repo)
+          - release (GitHub Releases)
+        default: 'repository (push to repo)'
 
+      release_tag:
+        description: '🏷️ نام تگ ریلیز (فقط در صورت انتخاب Release)'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -42,7 +55,8 @@ jobs:
     steps:
       - name: 📂 Checkout Repository
         uses: actions/checkout@v4
-        
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🔧 Install Dependencies
         run: |
@@ -106,6 +120,7 @@ jobs:
           vid   = re.search(r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})', URL)[1]
           clean = re.sub(r'[^a-zA-Z0-9\-_()\[\]]', '_', title.replace(' ', '_'))
           clean = re.sub(r'_+', '_', clean).strip('_')[:70] or vid
+          clean = clean.lstrip('-')
           fname = f"{clean}_{vid}_{QUAL}.{FMT}"
 
           with open(".download_info", "w", encoding="utf-8") as f:
@@ -148,7 +163,7 @@ jobs:
             BASE="${FILENAME%.*}"
             # split directly inside release_files
             cd release_files
-            zip -r -s "${THRESH_MB}m" "${BASE}.zip" -- "$FILENAME"
+            zip -r -s "${THRESH_MB}m" "${BASE}.zip" "./$FILENAME"
             rm -- "$FILENAME"
             cd ..
             echo "Parts created:"
@@ -162,6 +177,7 @@ jobs:
         run: echo "date=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
 
       - name: 📤 Push to Repository
+        if: github.event.inputs.upload_method == 'repository (push to repo)'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -171,7 +187,27 @@ jobs:
           git commit -m "⬇️ YouTube: ${{ steps.retrieve.outputs.filename }} [skip ci]" || echo "Nothing to commit"
           git push
 
-      
+      - name: 📤 Upload to GitHub Releases
+        if: github.event.inputs.upload_method == 'release (GitHub Releases)'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag != '' && github.event.inputs.release_tag || format('yt-{0}', github.run_number) }}
+          name: ${{ format('YouTube - {0}', steps.retrieve.outputs.filename) }}
+          body: |
+            **📽️ YouTube Download**
+
+            **Title:** ${{ steps.retrieve.outputs.title }}
+            **Original Link:** ${{ github.event.inputs.video_url }}
+            **Quality:** ${{ github.event.inputs.desired_quality }}
+            **Format:** ${{ github.event.inputs.output_format }}
+            **Downloaded on:** ${{ steps.get_date.outputs.date }}
+
+            ---
+            Powered by Meli-Action ⚡
+          files: release_files/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: false
 
       - name: 🧹 Cleanup
         if: always()
